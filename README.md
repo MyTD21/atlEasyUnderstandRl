@@ -73,3 +73,38 @@
 - q_table[next_row, next_col]不是确定的吗？为啥要加max？因为q_table[next_row, next_col]包含不同的动作，要取4个动作里收益最高的；
 - 如何理解TD？Temporal Difference，即时间序列中连续的两个时刻（当前步 t 和下一步 t+1）的价值估计之差；
 
+# DPO
+## 介绍
+- DPO（direct preference optimization，直接偏好优化）是一种模型训练方法，是对已经训练好的模型的一种参数微调方式；
+- 定义：直接用人类偏好（chosen vs rejected）训练模型，通过最大化策略模型和参考模型对人类偏好的**相对倾向性**，使得模型更加倾向于人类的偏好；
+- policy_model和ref_model在强化训练开始前一般采用同一模型；ref_model训练中冻结参数，仅更新policy_model，最终也使用policy_model进行推理；
+- 偏好数据集，包含prompt，chosen，rejected；
+## 损失函数
+      def dpo_loss(policy_model, ref_model, batch, beta=0.1):
+          # 策略模型（当前训练的模型）计算log概率
+          chosen_logits = policy_model(input_ids=batch["chosen_input_ids"], attention_mask=batch["chosen_attention_mask"]).logits
+          rejected_logits = policy_model(...).logits
+
+          with torch.no_grad():    # 参考模型（通常是预训练模型快照）计算log概率（冻结参数）
+              ref_chosen_logits = ref_model(...).logits
+              ref_rejected_logits = ref_model(...).logits
+
+          def get_sequence_log_prob(logits, input_ids, attention_mask): # 计算生成该序列的 “联合概率” 的对数；
+                ...  
+
+          # 计算策略模型和参考模型的log概率差
+          policy_chosen_logprob = get_sequence_log_prob(chosen_logits, batch["chosen_input_ids"], batch["chosen_attention_mask"])
+          policy_rejected_logprob = get_sequence_log_prob(rejected_logits, batch["rejected_input_ids"], batch["rejected_attention_mask"])
+          ref_chosen_logprob = get_sequence_log_prob(ref_chosen_logits, batch["chosen_input_ids"], batch["chosen_attention_mask"])
+          ref_rejected_logprob = get_sequence_log_prob(ref_rejected_logits, batch["rejected_input_ids"], batch["rejected_attention_mask"])
+
+          logits = (policy_chosen_logprob - policy_rejected_logprob) - (ref_chosen_logprob - ref_rejected_logprob)
+          loss = -F.logsigmoid(beta * logits).mean()  # 负对数似然，确保chosen概率更高
+          return loss
+
+      # 损失函数解释：通过对比 “策略模型” 和 “参考模型” 对人类偏好回答（chosen）与非偏好回答（rejected）的 “相对倾向性”，迫使策略模型更明显地偏好 chosen；
+      # 为什么要有参考模型？
+            a 避免无意义膨胀，防止过于偏向chosen；b 防止遗忘初始能力；
+
+
+
